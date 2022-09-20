@@ -3,6 +3,7 @@ import dsl.dsl._
 import json._
 import pureconfig.ConfigReader.Result
 import pureconfig._
+import scala.util._
 
 object Main extends App {
 
@@ -55,7 +56,7 @@ object Main extends App {
       )
     )
   )
-
+/*
   type JsonRule[A] = Json
 
   val jsonInterpreter = new RuleSym[JsonRule] {
@@ -111,7 +112,7 @@ object Main extends App {
 
   println("*" * 80)
   println(result)
-
+*/
   def readerReadsMissingKeys[A](
       cursor: ConfigObjectCursor,
       key: String,
@@ -127,10 +128,9 @@ object Main extends App {
       cursor: ConfigObjectCursor,
       f: PartialFunction[A, B]
   )(a: A): Result[B] =
-    f.lift(a) match {
-      case None =>
-        cursor.failed[B](error.ExceptionThrown(new Exception("undefined")))
-      case Some(v) => Right(v)
+    Try(f(a)) match {
+      case Failure(exception) => cursor.failed[B](error.ExceptionThrown(exception))
+      case Success(value) => Right(value)
     }
 
   def readerForObj1Partial[B, A](key: String)(
@@ -143,18 +143,19 @@ object Main extends App {
         )
       }
 
-  def numDecoder[F[_]]: ConfigReader[Rule[F, Int]] =
-    ConfigReader.forProduct1[Rule[F, Int], Int]("num")(value =>
-      (rs: RuleSym[F]) => rs.num(value)
-    )
+  implicit def ruleIntConfigReader[F[_]]: ConfigReader[Rule[F, Int]] = {
+    val numConfigReader: ConfigReader[Rule[F, Int]] =
+      ConfigReader.forProduct1[Rule[F, Int], Int]("num")(value =>
+        (rs: RuleSym[F]) => rs.num(value)
+      )
 
-  def variableDecoder[F[_]]: ConfigReader[Rule[F, Int]] =
-    ConfigReader.forProduct1[Rule[F, Int], String]("variable")(value =>
-      (rs: RuleSym[F]) => rs.variable(value)
-    )
+    val variableConfigReader: ConfigReader[Rule[F, Int]] =
+      ConfigReader.forProduct1[Rule[F, Int], String]("variable")(value =>
+        (rs: RuleSym[F]) => rs.variable(value)
+      )
 
-  implicit def ruleIntConfDecoder[F[_]]: ConfigReader[Rule[F, Int]] =
-    numDecoder[F] orElse variableDecoder[F]
+    numConfigReader orElse variableConfigReader
+  }
 
   def equalsDecode[F[_]]: ConfigReader[Rule[F, Boolean]] =
     readerForObj1Partial[Rule[F, Boolean], List[Rule[F, Int]]]("equal") {
@@ -164,8 +165,11 @@ object Main extends App {
 
   def andDecode[F[_]]: ConfigReader[Rule[F, Boolean]] =
     readerForObj1Partial[Rule[F, Boolean], List[Rule[F, Boolean]]]("and") {
-      case left :: right :: Nil =>
-        (rs: RuleSym[F]) => rs.and(left(rs), right(rs))
+      case left :: tail =>
+        (rs: RuleSym[F]) =>
+          tail.foldLeft(left(rs)){
+            case (acc, right ) => rs.and(acc, right(rs))
+          }
     }
 
   implicit def ruleBoolConfDecoder[F[_]]: ConfigReader[Rule[F, Boolean]] =
@@ -222,28 +226,23 @@ object Main extends App {
   val configStr =
     """
       |{
-      |    "and":
-      |    [
-      |        {
-      |            "equal":
-      |            [
-      |                {
-      |                    "variable": "categoryId"
-      |                },
-      |                {
-      |                    "num": 10
-      |                }
+      |    "and" = [
+      |{
+      |            "equal" = [
+      |                { "variable" = "categoryId"},
+      |                { "num" = 12 }
       |            ]
       |        },
       |        {
-      |            "equal":
-      |            [
-      |                {
-      |                    "variable": "price"
-      |                },
-      |                {
-      |                    "num": 3
-      |                }
+      |            "equal" = [
+      |                { "variable" = "price" },
+      |                { "num" =  3 },
+      |            ]
+      |        },
+      |        {
+      |            "equal" = [
+      |                { "variable" = "price" },
+      |                { "num" =  5 },
       |            ]
       |        }
       |    ]
